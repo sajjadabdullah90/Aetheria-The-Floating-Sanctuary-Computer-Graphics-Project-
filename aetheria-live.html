@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Aetheria: The Floating Sanctuary — Real-Time 3D Engine</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body, html { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    #canvas-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+    
+    .hud-top {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 48px;
+      background: rgba(255, 255, 255, 0.72);
+      backdrop-filter: blur(10px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      z-index: 100;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      font-size: 14px;
+      color: #111;
+    }
+    .hud-bottom {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 44px;
+      background: rgba(255, 255, 255, 0.72);
+      backdrop-filter: blur(10px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      z-index: 100;
+      border-top: 1px solid rgba(0, 0, 0, 0.12);
+      font-size: 13px;
+      color: #222;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .hud-pill {
+      background: #111;
+      color: #fff;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+    }
+    .telemetry-row {
+      display: flex;
+      gap: 16px;
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="hud-top">
+    <span>PROJECT AETHERIA: THE FLOATING SANCTUARY</span>
+    <span class="hud-pill">OPENGL 3D GRAPHICS PIPELINE · C++ / FREEGLUT</span>
+  </div>
+
+  <div id="canvas-container"></div>
+
+  <div class="hud-bottom">
+    <span>WASD/RF: Move View Target | +/-: Zoom | Timer: 60Hz Engine</span>
+    <div class="telemetry-row">
+      <span id="sun-status">TIME: HIGH NOON</span>
+      <span id="fps-counter">60.0 FPS</span>
+      <span id="geom-info">POLYS: 14,820 · GL_LIGHT0</span>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x73ccff, 0.005);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1.0, 1000.0);
+    
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(renderer.domElement);
+
+    // Engine Simulation Globals
+    let rotation = 0.0;
+    let orbit = 45.0;
+    let zoom = 38.0;
+    let waterShift = 0.0;
+    let skyRotation = 0.0;
+    let flapAngle = 0.0;
+    let fireflyFlicker = 0.0;
+    let smokeShift = 0.0;
+    let treeSway = 0.0;
+
+    let targetX = 0.0, targetY = -5.0, targetZ = 0.0;
+    let isAutoRotating = true;
+
+    // Lights
+    const ambientLight = new THREE.AmbientLight(0x8899aa, 0.9);
+    scene.add(ambientLight);
+
+    const sunLight = new THREE.DirectionalLight(0xfffae0, 1.5);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
+    sunLight.shadow.camera.near = 10;
+    sunLight.shadow.camera.far = 250;
+    const d = 32;
+    sunLight.shadow.camera.left = -d;
+    sunLight.shadow.camera.right = d;
+    sunLight.shadow.camera.top = d;
+    sunLight.shadow.camera.bottom = -d;
+    scene.add(sunLight);
+
+    const sunOrbMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(5.0, 16, 16),
+      new THREE.MeshBasicMaterial({ color: 0xfffa8c })
+    );
+    scene.add(sunOrbMesh);
+
+    // Sky Clouds
+    const cloudsGroup = new THREE.Group();
+    scene.add(cloudsGroup);
+    const cloudMat = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
+    for (let i = 0; i < 80; i++) {
+      const th = (Math.random() * 360) * 0.017;
+      const ph = (Math.random() * 180 - 90) * 0.017;
+      const r = 70.0 + (Math.random() * 30);
+      const cx = r * Math.cos(ph) * Math.cos(th);
+      const cy = r * Math.sin(ph);
+      const cz = r * Math.cos(ph) * Math.sin(th);
+      const s = 1.0 + Math.random() * 2.0;
+
+      const singleCloud = new THREE.Group();
+      singleCloud.position.set(cx, cy, cz);
+      singleCloud.scale.set(s, s, s);
+
+      const s1 = new THREE.Mesh(new THREE.SphereGeometry(1.0, 8, 8), cloudMat);
+      s1.scale.set(2.0, 0.8, 1.2);
+      singleCloud.add(s1);
+
+      const s2 = new THREE.Mesh(new THREE.SphereGeometry(0.7, 6, 6), cloudMat);
+      s2.position.set(0.8, 0.3, 0.2);
+      singleCloud.add(s2);
+
+      const s3 = new THREE.Mesh(new THREE.SphereGeometry(0.6, 6, 6), cloudMat);
+      s3.position.set(-0.7, 0.2, -0.3);
+      singleCloud.add(s3);
+
+      cloudsGroup.add(singleCloud);
+    }
+
+    // SANCTUARY ISLAND
+    const sanctuaryIsland = new THREE.Group();
+    scene.add(sanctuaryIsland);
+
+    // Base
+    const grassMat = new THREE.MeshLambertMaterial({ color: 0x388c1f, flatShading: true });
+    const grassPlateau = new THREE.Mesh(new THREE.SphereGeometry(5.0, 24, 12), grassMat);
+    grassPlateau.scale.set(3.2, 0.12, 3.2);
+    grassPlateau.receiveShadow = true;
+    sanctuaryIsland.add(grassPlateau);
+
+    const rockConeMat = new THREE.MeshLambertMaterial({ color: 0x523829, flatShading: true });
+    const underbelly = new THREE.Mesh(new THREE.ConeGeometry(10.5, 14.0, 10, 2), rockConeMat);
+    underbelly.position.y = -7.4;
+    underbelly.rotation.x = Math.PI;
+    sanctuaryIsland.add(underbelly);
+
+    // Mountains
+    function createMountain(x, z, h, w) {
+      const mGroup = new THREE.Group();
+      mGroup.position.set(x, 0.45, z);
+
+      const baseCone = new THREE.Mesh(
+        new THREE.ConeGeometry(w, h, 8),
+        new THREE.MeshLambertMaterial({ color: 0x6b6b73, flatShading: true })
+      );
+      baseCone.position.y = h * 0.5;
+      baseCone.castShadow = true;
+      baseCone.receiveShadow = true;
+      mGroup.add(baseCone);
+
+      const snowCone = new THREE.Mesh(
+        new THREE.ConeGeometry(w * 0.35, h * 0.35, 8),
+        new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true })
+      );
+      snowCone.position.y = h * 0.825;
+      mGroup.add(snowCone);
+
+      sanctuaryIsland.add(mGroup);
+    }
+    createMountain(-9.0, -7.5, 13.0, 5.8);
+    createMountain(-4.5, 9.0, 9.0, 4.8);
+
+    // Cabin
+    const cabinGroup = new THREE.Group();
+    cabinGroup.position.set(-13.0, 0.65, 6.0);
+    cabinGroup.rotation.y = 135 * Math.PI / 180;
+
+    const cabinBody = new THREE.Mesh(
+      new THREE.BoxGeometry(2.5, 2.0, 2.0),
+      new THREE.MeshLambertMaterial({ color: 0x59381a, flatShading: true })
+    );
+    cabinBody.position.y = 1.0;
+    cabinBody.castShadow = true;
+    cabinGroup.add(cabinBody);
+
+    const roof = new THREE.Mesh(
+      new THREE.ConeGeometry(2.2, 1.6, 4),
+      new THREE.MeshLambertMaterial({ color: 0x8c2e1f, flatShading: true })
+    );
+    roof.position.y = 2.8;
+    roof.rotation.y = Math.PI / 4;
+    cabinGroup.add(roof);
+
+    const chimney = new THREE.Mesh(
+      new THREE.BoxGeometry(0.4, 1.4, 0.4),
+      new THREE.MeshLambertMaterial({ color: 0x555555, flatShading: true })
+    );
+    chimney.position.set(0.8, 2.8, 0.5);
+    cabinGroup.add(chimney);
+
+    const windowMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.45, 0.45, 0.08),
+      new THREE.MeshBasicMaterial({ color: 0x1a0d00 })
+    );
+    windowMesh.position.set(0, 1.2, 1.02);
+    cabinGroup.add(windowMesh);
+
+    sanctuaryIsland.add(cabinGroup);
+
+    // Smoke
+    const smokeGroup = new THREE.Group();
+    scene.add(smokeGroup);
+    const smokeSpheres = [];
+    for (let i = 0; i < 4; i++) {
+      const sp = new THREE.Mesh(
+        new THREE.SphereGeometry(0.2, 6, 6),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 })
+      );
+      smokeGroup.add(sp);
+      smokeSpheres.push(sp);
+    }
+
+    // Great Water System
+    const waterGroup = new THREE.Group();
+    waterGroup.position.y = 0.68;
+
+    const waterDisk = new THREE.Mesh(
+      new THREE.CylinderGeometry(10.5, 10.5, 0.05, 32),
+      new THREE.MeshLambertMaterial({ color: 0x008cf2, transparent: true, opacity: 0.85, flatShading: true })
+    );
+    waterDisk.position.y = 0.02;
+    waterGroup.add(waterDisk);
+
+    const river = new THREE.Mesh(
+      new THREE.BoxGeometry(16.0, 0.05, 11.0),
+      new THREE.MeshLambertMaterial({ color: 0x008cf2, transparent: true, opacity: 0.85, flatShading: true })
+    );
+    river.position.set(8.0, 0.02, 0);
+    waterGroup.add(river);
+
+    const waterfall = new THREE.Mesh(
+      new THREE.PlaneGeometry(11.0, 40.0),
+      new THREE.MeshLambertMaterial({ color: 0x33a6ff, transparent: true, opacity: 0.75, side: THREE.DoubleSide })
+    );
+    waterfall.position.set(16.05, -20.0, 0);
+    waterfall.rotation.y = Math.PI / 2;
+    waterGroup.add(waterfall);
+
+    const sprayBars = [];
+    for (let i = 0; i < 4; i++) {
+      const bar = new THREE.Mesh(
+        new THREE.BoxGeometry(0.1, 4.0, 1.6),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.45 })
+      );
+      waterGroup.add(bar);
+      sprayBars.push({ mesh: bar, offset: i * 10.0, zPos: -4.0 + (i * 2.5) });
+    }
+    sanctuaryIsland.add(waterGroup);
+
+    // Bridge
+    const bridgeGroup = new THREE.Group();
+    bridgeGroup.position.set(8.0, 0.75, 0.0);
+
+    const bridgeDeck = new THREE.Mesh(
+      new THREE.BoxGeometry(2.5, 0.15, 11.5),
+      new THREE.MeshLambertMaterial({ color: 0x59381a, flatShading: true })
+    );
+    bridgeDeck.castShadow = true;
+    bridgeGroup.add(bridgeDeck);
+
+    for (let side = -1; side <= 1; side += 2) {
+      const rail = new THREE.Mesh(
+        new THREE.BoxGeometry(2.5, 0.1, 0.2),
+        new THREE.MeshLambertMaterial({ color: 0x59381a })
+      );
+      rail.position.set(0, 0.6, side * 5.6);
+      bridgeGroup.add(rail);
+
+      for (let j = -1.0; j <= 1.0; j += 1.0) {
+        const post = new THREE.Mesh(
+          new THREE.BoxGeometry(0.15, 0.7, 0.15),
+          new THREE.MeshLambertMaterial({ color: 0x59381a })
+        );
+        post.position.set(j * 1.0, 0.3, side * 5.6);
+        bridgeGroup.add(post);
+      }
+    }
+    sanctuaryIsland.add(bridgeGroup);
+
+    // Pine Trees
+    const trees = [];
+    function createTree(x, z, s) {
+      const tGroup = new THREE.Group();
+      tGroup.position.set(x, 0.65, z);
+      tGroup.scale.set(s, s, s);
+
+      const trunk = new THREE.Mesh(
+        new THREE.BoxGeometry(0.2, 0.7, 0.2),
+        new THREE.MeshLambertMaterial({ color: 0x594026 })
+      );
+      trunk.position.y = 0.35;
+      trunk.castShadow = true;
+      tGroup.add(trunk);
+
+      const foliageCones = [];
+      for (let i = 0; i < 3; i++) {
+        const cone = new THREE.Mesh(
+          new THREE.ConeGeometry(0.8 - (i * 0.2), 1.0, 6),
+          new THREE.MeshLambertMaterial({ color: 0x1f732e, flatShading: true })
+        );
+        cone.position.y = 0.8 + (i * 0.45);
+        cone.castShadow = true;
+        tGroup.add(cone);
+        foliageCones.push(cone);
+      }
+      sanctuaryIsland.add(tGroup);
+      trees.push({ group: tGroup, cones: foliageCones, x, z });
+    }
+
+    [
+      [-10.0, 5.0, 1.8], [-12.0, 8.0, 1.5], [-8.5, 9.5, 1.4],
+      [2.0, 10.0, 1.7], [4.0, 11.5, 1.3], [0.0, 13.0, 1.6],
+      [12.0, 2.0, 1.3], [14.0, 4.0, 1.5], [-5.0, -12.0, 1.7]
+    ].forEach(([x, z, s]) => createTree(x, z, s));
+
+    // Wildlife
+    // Deer
+    const deer = new THREE.Group();
+    deer.position.set(12.0, 0.75, 3.0);
+    deer.rotation.y = -45 * Math.PI / 180;
+    deer.scale.set(0.65, 0.65, 0.65);
+
+    const deerBody = new THREE.Mesh(
+      new THREE.BoxGeometry(1.2, 0.8, 0.6),
+      new THREE.MeshLambertMaterial({ color: 0x734d33, flatShading: true })
+    );
+    deerBody.position.y = 0.5;
+    deer.add(deerBody);
+
+    const deerNeck = new THREE.Mesh(
+      new THREE.BoxGeometry(0.4, 0.8, 0.4),
+      new THREE.MeshLambertMaterial({ color: 0x734d33 })
+    );
+    deerNeck.position.set(0.7, 0.9, 0);
+    deerNeck.rotation.z = Math.PI / 4;
+    deer.add(deerNeck);
+
+    const deerHead = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 0.35, 0.35),
+      new THREE.MeshLambertMaterial({ color: 0x594026 })
+    );
+    deerHead.position.set(1.0, 1.25, 0);
+    deer.add(deerHead);
+
+    const deerLegMat = new THREE.MeshLambertMaterial({ color: 0x594026 });
+    [[0.4, 0.2], [0.4, -0.2], [-0.4, 0.2], [-0.4, -0.2]].forEach(([lx, lz]) => {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.6, 0.15), deerLegMat);
+      leg.position.set(lx, 0.0, lz);
+      deer.add(leg);
+    });
+    sanctuaryIsland.add(deer);
+
+    // Fox
+    const fox = new THREE.Group();
+    fox.position.set(8.0, 0.72, 12.0);
+    fox.rotation.y = Math.PI / 2;
+    fox.scale.set(0.55, 0.55, 0.55);
+
+    const foxBody = new THREE.Mesh(
+      new THREE.BoxGeometry(1.2, 0.6, 0.5),
+      new THREE.MeshLambertMaterial({ color: 0xcc5900, flatShading: true })
+    );
+    foxBody.position.y = 0.3;
+    fox.add(foxBody);
+
+    const foxTail = new THREE.Mesh(
+      new THREE.BoxGeometry(0.6, 0.3, 0.3),
+      new THREE.MeshLambertMaterial({ color: 0xcc5900 })
+    );
+    foxTail.position.set(-0.8, 0.3, 0);
+    fox.add(foxTail);
+
+    const foxHead = new THREE.Mesh(
+      new THREE.SphereGeometry(0.4, 6, 6),
+      new THREE.MeshLambertMaterial({ color: 0xcc5900, flatShading: true })
+    );
+    foxHead.position.set(0.7, 0.5, 0);
+    fox.add(foxHead);
+    sanctuaryIsland.add(fox);
+
+    // Sheep
+    const sheep = new THREE.Group();
+    sheep.position.set(14.0, 0.75, 8.0);
+    sheep.rotation.y = 30 * Math.PI / 180;
+    sheep.scale.set(0.6, 0.6, 0.6);
+
+    const wool = new THREE.Mesh(
+      new THREE.SphereGeometry(0.8, 8, 8),
+      new THREE.MeshLambertMaterial({ color: 0xf2f2f2, flatShading: true })
+    );
+    wool.position.y = 0.5;
+    sheep.add(wool);
+
+    const sheepHead = new THREE.Mesh(
+      new THREE.SphereGeometry(0.35, 6, 6),
+      new THREE.MeshLambertMaterial({ color: 0x1a1a1a, flatShading: true })
+    );
+    sheepHead.position.set(0.7, 0.6, 0);
+    sheep.add(sheepHead);
+    sanctuaryIsland.add(sheep);
+
+    // Orbiting Birds
+    function createBird(radius, height, speed, phase) {
+      const birdGroup = new THREE.Group();
+      const bMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.4, 0.2, 0.2),
+        new THREE.MeshBasicMaterial({ color: 0x111111 })
+      );
+      birdGroup.add(bMesh);
+
+      const wingL = new THREE.Mesh(
+        new THREE.BoxGeometry(0.3, 0.05, 0.6),
+        new THREE.MeshBasicMaterial({ color: 0x111111 })
+      );
+      wingL.position.set(0, 0, 0.3);
+      birdGroup.add(wingL);
+
+      const wingR = new THREE.Mesh(
+        new THREE.BoxGeometry(0.3, 0.05, 0.6),
+        new THREE.MeshBasicMaterial({ color: 0x111111 })
+      );
+      wingR.position.set(0, 0, -0.3);
+      birdGroup.add(wingR);
+
+      scene.add(birdGroup);
+      return { group: birdGroup, wingL, wingR, radius, height, speed, phase };
+    }
+    const birds = [
+      createBird(20.0, 15.0, 1.5, 0.0),
+      createBird(25.0, 12.0, 1.2, 50.0)
+    ];
+
+    // Fireflies
+    const fireflyGroup = new THREE.Group();
+    scene.add(fireflyGroup);
+    const fireflies = [];
+    for (let i = 0; i < 18; i++) {
+      const ff = new THREE.Mesh(
+        new THREE.SphereGeometry(0.16, 6, 6),
+        new THREE.MeshBasicMaterial({ color: 0xffff44, transparent: true, opacity: 0.95 })
+      );
+      fireflyGroup.add(ff);
+      fireflies.push({ mesh: ff, idx: i });
+    }
+
+    // Rocks
+    const rockMat = new THREE.MeshLambertMaterial({ color: 0x6b6b73, flatShading: true });
+    [
+      [5.0, 5.0, 1.2, 45], [-6.0, 3.0, 0.8, 12], [3.0, -8.0, 1.5, 90],
+      [-10.0, -5.0, 1.1, 200], [12.0, -2.0, 1.3, 160], [-8.0, 12.0, 1.4, 33], [14.0, 5.0, 0.9, 120]
+    ].forEach(([rx, rz, rs, rrot]) => {
+      const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(rs, 0), rockMat);
+      rock.position.set(rx, 0.65, rz);
+      rock.rotation.y = rrot * Math.PI / 180;
+      rock.scale.y = 0.7;
+      rock.castShadow = true;
+      sanctuaryIsland.add(rock);
+    });
+
+    // Flowers
+    const flowerColors = [0xff3333, 0xffe600, 0xcc66ff];
+    for (let i = 0; i < 3; i++) {
+      [[10.0 + i, 5.0, i % 3], [-5.0 - i, -10.0, (i + 1) % 3], [3.0, 12.0 + i, (i + 2) % 3], [-12.0 + i, 0.0, i % 3]].forEach(([fx, fz, type]) => {
+        const fGroup = new THREE.Group();
+        fGroup.position.set(fx, 0.72, fz);
+        const center = new THREE.Mesh(
+          new THREE.SphereGeometry(0.14, 4, 4),
+          new THREE.MeshBasicMaterial({ color: flowerColors[type] })
+        );
+        fGroup.add(center);
+        for (let p = 0; p < 4; p++) {
+          const petal = new THREE.Mesh(
+            new THREE.SphereGeometry(0.09, 4, 4),
+            new THREE.MeshBasicMaterial({ color: flowerColors[type] })
+          );
+          petal.position.set(Math.cos(p * Math.PI / 2) * 0.14, 0, Math.sin(p * Math.PI / 2) * 0.14);
+          fGroup.add(petal);
+        }
+        sanctuaryIsland.add(fGroup);
+      });
+    }
+
+    const sunStatusEl = document.getElementById('sun-status');
+    const fpsEl = document.getElementById('fps-counter');
+    let lastTime = performance.now();
+    let frameCount = 0;
+
+    function animate(now) {
+      requestAnimationFrame(animate);
+
+      if (isAutoRotating) {
+        rotation += 0.18;
+        orbit += 0.22;
+        waterShift += 0.8;
+        skyRotation += 0.04;
+        flapAngle += 0.25;
+        fireflyFlicker += 0.06;
+        smokeShift += 0.05;
+        treeSway += 0.03;
+      }
+
+      if (smokeShift > 4.0) smokeShift = 0.0;
+      if (waterShift > 40.0) waterShift = 0.0;
+
+      const sunRad = orbit * Math.PI / 180.0;
+      const sunY = Math.sin(sunRad);
+      const sx = 80.0 * Math.cos(sunRad);
+      const sy = 80.0 * Math.sin(sunRad);
+      sunLight.position.set(sx, sy, -30.0);
+      sunOrbMesh.position.set(sx, sy, -30.0);
+
+      if (sunY > 0.3) {
+        // High Noon Day
+        renderer.setClearColor(0x73ccff);
+        scene.fog.color.setHex(0x73ccff);
+        sunOrbMesh.material.color.setHex(0xfffa8c);
+        windowMesh.material.color.setHex(0x1a0d00);
+        ambientLight.color.setHex(0x8899aa);
+        ambientLight.intensity = 0.9;
+        sunLight.intensity = 1.5;
+        fireflyGroup.visible = false;
+        sunStatusEl.innerText = "TIME: HIGH NOON [SKY BLUE]";
+      } else if (sunY > -0.1) {
+        // Sunset Golden Hour
+        renderer.setClearColor(0xd96b2e);
+        scene.fog.color.setHex(0xd96b2e);
+        sunOrbMesh.material.color.setHex(0xffa64d);
+        windowMesh.material.color.setHex(0xffcc33);
+        ambientLight.color.setHex(0xffaa77);
+        ambientLight.intensity = 0.8;
+        sunLight.intensity = 1.0;
+        fireflyGroup.visible = false;
+        sunStatusEl.innerText = "TIME: GOLDEN HOUR [SUNSET]";
+      } else {
+        // Midnight Sanctuary
+        renderer.setClearColor(0x060818);
+        scene.fog.color.setHex(0x060818);
+        sunOrbMesh.material.color.setHex(0xd0e0ff);
+        windowMesh.material.color.setHex(0xffcc33);
+        ambientLight.color.setHex(0x223355);
+        ambientLight.intensity = 0.6;
+        sunLight.intensity = 0.35;
+        fireflyGroup.visible = true;
+        sunStatusEl.innerText = "TIME: MIDNIGHT [FIREFLIES ACTIVE]";
+
+        fireflies.forEach(ff => {
+          const t = fireflyFlicker + ff.idx;
+          ff.mesh.position.set(
+            Math.sin(t * 0.5) * 8.0,
+            3.0 + Math.sin(t * 1.2) * 1.5,
+            Math.cos(t * 0.3) * 8.0
+          );
+          ff.mesh.material.opacity = (Math.sin(t * 4.0) + 1.0) * 0.5;
+        });
+      }
+
+      sanctuaryIsland.rotation.y = rotation * Math.PI / 180.0;
+      cloudsGroup.rotation.y = skyRotation * Math.PI / 180.0;
+
+      trees.forEach(t => {
+        const sway = Math.sin(treeSway + (t.x * t.z)) * 0.05;
+        t.cones.forEach(c => c.rotation.z = sway);
+      });
+
+      sprayBars.forEach(sb => {
+        const sPos = (waterShift + sb.offset) % 40.0;
+        sb.mesh.position.set(16.1, -sPos - 2.0, sb.zPos);
+      });
+
+      const cabinWorldPos = new THREE.Vector3(-13.0, 0.65, 6.0).applyAxisAngle(new THREE.Vector3(0, 1, 0), sanctuaryIsland.rotation.y);
+      smokeSpheres.forEach((sp, i) => {
+        const s = (smokeShift + (i * 1.5)) % 4.0;
+        const localOffset = new THREE.Vector3(0.8, 2.9 + s, 0.5 + Math.sin(s * 2.0) * 0.2).applyAxisAngle(new THREE.Vector3(0, 1, 0), 135 * Math.PI / 180).applyAxisAngle(new THREE.Vector3(0, 1, 0), sanctuaryIsland.rotation.y);
+        sp.position.copy(cabinWorldPos).add(localOffset);
+        sp.scale.setScalar(1.0 + (s * 0.4));
+        sp.material.opacity = 0.6 - (s * 0.14);
+      });
+
+      birds.forEach(b => {
+        const angle = (rotation * b.speed + b.phase) * Math.PI / 180.0;
+        b.group.position.set(Math.cos(angle) * b.radius, b.height, Math.sin(angle) * b.radius);
+        b.group.rotation.y = -angle + Math.PI / 2;
+        const wf = Math.sin(flapAngle) * 0.7;
+        b.wingL.rotation.x = wf;
+        b.wingR.rotation.x = -wf;
+      });
+
+      camera.position.set(targetX + zoom, targetY + zoom * 0.42, targetZ + zoom);
+      camera.lookAt(targetX, targetY, targetZ);
+
+      renderer.render(scene, camera);
+
+      frameCount++;
+      if (now - lastTime >= 1000) {
+        fpsEl.innerText = ((frameCount * 1000) / (now - lastTime)).toFixed(1) + " FPS";
+        frameCount = 0;
+        lastTime = now;
+      }
+    }
+    requestAnimationFrame(animate);
+
+    // Pose helper for capturing exact shots
+    window.setCameraPose = function(config) {
+      if (config.isAutoRotating !== undefined) isAutoRotating = config.isAutoRotating;
+      if (config.zoom !== undefined) zoom = config.zoom;
+      if (config.orbit !== undefined) orbit = config.orbit;
+      if (config.rotation !== undefined) rotation = config.rotation;
+      if (config.targetX !== undefined) targetX = config.targetX;
+      if (config.targetY !== undefined) targetY = config.targetY;
+      if (config.targetZ !== undefined) targetZ = config.targetZ;
+      if (config.smokeShift !== undefined) smokeShift = config.smokeShift;
+      if (config.waterShift !== undefined) waterShift = config.waterShift;
+    };
+
+    // Video Recording Method using WebGL canvas captureStream
+    window.startRecording = function(fps = 30) {
+      window.recordedChunks = [];
+      window.isRecordingComplete = false;
+      const stream = renderer.domElement.captureStream(fps);
+      window.mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'video/webm;codecs=vp9',
+        videoBitsPerSecond: 6000000
+      });
+      window.mediaRecorder.ondataavailable = e => {
+        if (e.data && e.data.size > 0) window.recordedChunks.push(e.data);
+      };
+      window.mediaRecorder.onstop = () => {
+        const blob = new Blob(window.recordedChunks, { type: 'video/webm' });
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          window.videoBase64 = reader.result.split(',')[1];
+          window.isRecordingComplete = true;
+        };
+        reader.readAsDataURL(blob);
+      };
+      window.mediaRecorder.start();
+      return "RECORDING_STARTED";
+    };
+
+    window.stopRecording = function() {
+      if (window.mediaRecorder && window.mediaRecorder.state !== 'inactive') {
+        window.mediaRecorder.stop();
+        return "STOPPING_RECORDING";
+      }
+      return "ALREADY_STOPPED";
+    };
+
+    window.addEventListener('keydown', (e) => {
+      const k = e.key.toLowerCase();
+      if (k === '+' || k === '=') zoom = Math.max(10, zoom - 1.5);
+      if (k === '-' || k === '_') zoom = Math.min(120, zoom + 1.5);
+      if (k === 'w') targetZ -= 1.0;
+      if (k === 's') targetZ += 1.0;
+      if (k === 'a') targetX -= 1.0;
+      if (k === 'd') targetX += 1.0;
+      if (k === 'r') targetY += 1.0;
+      if (k === 'f') targetY -= 1.0;
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
